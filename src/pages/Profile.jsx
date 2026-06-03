@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Calendar, Clock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { getSkills, createSkill, deleteSkill } from '../services/skills.service.js';
 import { getExperiences, createExperience, updateExperience, deleteExperience } from '../services/experiences.service.js';
 import { deleteUser } from '../services/users.service.js';
+import { getPostsByUserId, deletePost } from '../services/posts.service.js';
 import Spinner from '../components/Spinner.jsx';
 import ErrorCard from '../components/ErrorCard.jsx';
 import EmptyState from '../components/EmptyState.jsx';
@@ -24,12 +26,23 @@ const EMPTY_EXP = { companyName: '', role: '', startDate: '', endDate: '', descr
 export default function Profile() {
   const { token, user, isAuth, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const [activeTab, setActiveTab] = useState('skills');
 
   const [skills, setSkills]         = useState([]);
   const [experiences, setExp]       = useState([]);
   const [loadingSkills, setLSkills] = useState(true);
   const [loadingExp, setLExp]       = useState(true);
   const [error, setError]           = useState('');
+
+  // Scheduled posts
+  const [scheduledPosts, setScheduledPosts]   = useState([]);
+  const [loadingScheduled, setLoadingScheduled] = useState(true);
+  const [deletingPostId, setDeletingPostId]   = useState(null);
+
+  // Show success toast if redirected after scheduling
+  const [scheduleSuccess, setScheduleSuccess] = useState(false);
 
   // Skill form
   const [newSkill, setNewSkill]     = useState('');
@@ -51,6 +64,41 @@ export default function Profile() {
     getSkills(token).then(setSkills).catch(() => {}).finally(() => setLSkills(false));
     getExperiences(token).then(setExp).catch(() => {}).finally(() => setLExp(false));
   }, [token, isAuth, navigate]);
+
+  // Fetch user's scheduled posts
+  useEffect(() => {
+    if (!isAuth || !user) return;
+    setLoadingScheduled(true);
+    getPostsByUserId(user._id, token)
+      .then((posts) => {
+        setScheduledPosts(posts.filter((p) => p.status === 'scheduled'));
+      })
+      .catch(() => {})
+      .finally(() => setLoadingScheduled(false));
+  }, [token, isAuth, user]);
+
+  // Show success toast from navigation state
+  useEffect(() => {
+    if (location.state?.scheduledSuccess) {
+      setScheduleSuccess(true);
+      setActiveTab('scheduled');
+      // Clear state so it doesn't re-trigger
+      window.history.replaceState({}, '');
+      setTimeout(() => setScheduleSuccess(false), 4000);
+    }
+  }, [location.state]);
+
+  const handleCancelScheduledPost = async (postId) => {
+    setDeletingPostId(postId);
+    try {
+      await deletePost(postId, token);
+      setScheduledPosts((prev) => prev.filter((p) => p._id !== postId));
+    } catch (err) {
+      setError(err.message || 'Failed to cancel scheduled post.');
+    } finally {
+      setDeletingPostId(null);
+    }
+  };
 
   // ── Skills ──────────────────────────────────────────────────────────────
   const handleAddSkill = async (e) => {
@@ -132,6 +180,15 @@ export default function Profile() {
   return (
     <div className="page">
       <div className="container">
+        {/* Schedule success toast */}
+        {scheduleSuccess && (
+          <div className="schedule-toast">
+            <Calendar size={15} />
+            <span>Post scheduled successfully! It will be published at the chosen time.</span>
+            <button className="schedule-toast-close" onClick={() => setScheduleSuccess(false)}>×</button>
+          </div>
+        )}
+
         {/* Header */}
         <div className="profile-header">
           <div className="avatar avatar-lg">{initials(user)}</div>
@@ -145,103 +202,205 @@ export default function Profile() {
         {error && <ErrorCard message={error} />}
         <div className="divider" />
 
-        {/* Skills */}
-        <div>
-          <div className="section-header"><span className="section-title">Skills</span></div>
-          {loadingSkills ? <Spinner /> : (
-            <>
-              <div className="skills-wrap">
-                {skills.length === 0 && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>No skills added yet.</span>}
-                {skills.map((s) => (
-                  <SkillTag key={s._id} name={s.name} onDelete={() => handleDeleteSkill(s._id)} />
-                ))}
-              </div>
-              <form className="inline-form" onSubmit={handleAddSkill}>
-                <input className="input" placeholder="Add a skill…" style={{ maxWidth: 220 }} value={newSkill} onChange={(e) => setNewSkill(e.target.value)} />
-                <button className="btn-ghost btn-sm" type="submit" disabled={addingSkill || !newSkill.trim()}>
-                  {addingSkill ? <span className="spinner spinner-sm" /> : '+ Add'}
-                </button>
-              </form>
-            </>
-          )}
+        {/* Profile Tabs */}
+        <div className="profile-tabs">
+          <button
+            className={`profile-tab${activeTab === 'skills' ? ' active' : ''}`}
+            onClick={() => setActiveTab('skills')}
+          >
+            Skills
+            <span className="tab-count">{skills.length}</span>
+          </button>
+          <button
+            className={`profile-tab${activeTab === 'experience' ? ' active' : ''}`}
+            onClick={() => setActiveTab('experience')}
+          >
+            Experience
+            <span className="tab-count">{experiences.length}</span>
+          </button>
+          <button
+            className={`profile-tab${activeTab === 'scheduled' ? ' active' : ''}`}
+            onClick={() => setActiveTab('scheduled')}
+          >
+            <Calendar size={13} />
+            Scheduled Posts
+            {scheduledPosts.length > 0 && (
+              <span className="tab-count tab-count-accent">{scheduledPosts.length}</span>
+            )}
+          </button>
         </div>
 
-        <div className="divider" />
-
-        {/* Experience */}
-        <div>
-          <div className="section-header">
-            <span className="section-title">Experience</span>
-            {!showExpForm && (
-              <button className="btn-ghost btn-sm" onClick={openAddExp}>+ Add</button>
+        {/* ── Skills tab ─────────────────────────────────────── */}
+        {activeTab === 'skills' && (
+          <div>
+            <div className="section-header"><span className="section-title">Skills</span></div>
+            {loadingSkills ? <Spinner /> : (
+              <>
+                <div className="skills-wrap">
+                  {skills.length === 0 && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>No skills added yet.</span>}
+                  {skills.map((s) => (
+                    <SkillTag key={s._id} name={s.name} onDelete={() => handleDeleteSkill(s._id)} />
+                  ))}
+                </div>
+                <form className="inline-form" onSubmit={handleAddSkill}>
+                  <input className="input" placeholder="Add a skill…" style={{ maxWidth: 220 }} value={newSkill} onChange={(e) => setNewSkill(e.target.value)} />
+                  <button className="btn-ghost btn-sm" type="submit" disabled={addingSkill || !newSkill.trim()}>
+                    {addingSkill ? <span className="spinner spinner-sm" /> : '+ Add'}
+                  </button>
+                </form>
+              </>
             )}
           </div>
+        )}
 
-          {showExpForm && (
-            <div className="card" style={{ marginBottom: 16 }}>
-              <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 16 }}>
-                {editingExpId ? 'Edit Experience' : 'Add Experience'}
-              </p>
-              <form onSubmit={handleSaveExp} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <div className="form-group">
-                    <label className="form-label">Company</label>
-                    <input className="input" placeholder="Tech Corp" value={expForm.companyName} onChange={setExpField('companyName')} required />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Role</label>
-                    <input className="input" placeholder="Software Engineer" value={expForm.role} onChange={setExpField('role')} required />
-                  </div>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <div className="form-group">
-                    <label className="form-label">Start Date</label>
-                    <input className="input" type="date" value={expForm.startDate} onChange={setExpField('startDate')} required />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">End Date <span style={{ opacity: 0.5 }}>(optional)</span></label>
-                    <input className="input" type="date" value={expForm.endDate} onChange={setExpField('endDate')} />
-                  </div>
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Description <span style={{ opacity: 0.5 }}>(optional)</span></label>
-                  <textarea className="textarea" style={{ minHeight: 80 }} value={expForm.description} onChange={setExpField('description')} />
-                </div>
-                {expError && <div className="form-error">⚠️ {expError}</div>}
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                  <button type="button" className="btn-ghost btn-sm" onClick={() => { setShowExp(false); setEditingExpId(null); }}>Cancel</button>
-                  <button type="submit" className="btn-primary btn-sm" disabled={addingExp}>
-                    {addingExp ? <span className="spinner spinner-sm" /> : editingExpId ? '✓ Save changes' : 'Add Experience'}
-                  </button>
-                </div>
-              </form>
+        {/* ── Experience tab ─────────────────────────────────── */}
+        {activeTab === 'experience' && (
+          <div>
+            <div className="section-header">
+              <span className="section-title">Experience</span>
+              {!showExpForm && (
+                <button className="btn-ghost btn-sm" onClick={openAddExp}>+ Add</button>
+              )}
             </div>
-          )}
 
-          {loadingExp ? <Spinner /> : experiences.length === 0
-            ? <EmptyState icon="💼" title="No experiences yet" message="Add your work history." />
-            : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {experiences.map((exp) => (
-                  <div key={exp._id} className="exp-card">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            {showExpForm && (
+              <div className="card" style={{ marginBottom: 16 }}>
+                <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 16 }}>
+                  {editingExpId ? 'Edit Experience' : 'Add Experience'}
+                </p>
+                <form onSubmit={handleSaveExp} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div className="form-group">
+                      <label className="form-label">Company</label>
+                      <input className="input" placeholder="Tech Corp" value={expForm.companyName} onChange={setExpField('companyName')} required />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Role</label>
+                      <input className="input" placeholder="Software Engineer" value={expForm.role} onChange={setExpField('role')} required />
+                    </div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div className="form-group">
+                      <label className="form-label">Start Date</label>
+                      <input className="input" type="date" value={expForm.startDate} onChange={setExpField('startDate')} required />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">End Date <span style={{ opacity: 0.5 }}>(optional)</span></label>
+                      <input className="input" type="date" value={expForm.endDate} onChange={setExpField('endDate')} />
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Description <span style={{ opacity: 0.5 }}>(optional)</span></label>
+                    <textarea className="textarea" style={{ minHeight: 80 }} value={expForm.description} onChange={setExpField('description')} />
+                  </div>
+                  {expError && <div className="form-error">⚠️ {expError}</div>}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                    <button type="button" className="btn-ghost btn-sm" onClick={() => { setShowExp(false); setEditingExpId(null); }}>Cancel</button>
+                    <button type="submit" className="btn-primary btn-sm" disabled={addingExp}>
+                      {addingExp ? <span className="spinner spinner-sm" /> : editingExpId ? '✓ Save changes' : 'Add Experience'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {loadingExp ? <Spinner /> : experiences.length === 0
+              ? <EmptyState icon="💼" title="No experiences yet" message="Add your work history." />
+              : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {experiences.map((exp) => (
+                    <div key={exp._id} className="exp-card">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          <div className="exp-card-title">{exp.role}</div>
+                          <div className="exp-card-company">{exp.companyName}</div>
+                          <div className="exp-card-dates">{fmt(exp.startDate)} — {exp.endDate ? fmt(exp.endDate) : 'Present'}</div>
+                          {exp.description && <div className="exp-card-desc">{exp.description}</div>}
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, flexShrink: 0, marginLeft: 12 }}>
+                          <button className="btn-ghost btn-sm" onClick={() => openEditExp(exp)}>Edit</button>
+                          <button className="btn-danger btn-sm" onClick={() => handleDeleteExp(exp._id)}>Remove</button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            }
+          </div>
+        )}
+
+        {/* ── Scheduled Posts tab ─────────────────────────────── */}
+        {activeTab === 'scheduled' && (
+          <div>
+            <div className="section-header">
+              <span className="section-title">Scheduled Posts</span>
+              <Link to="/posts/new" className="btn-ghost btn-sm">
+                <Calendar size={13} />
+                Schedule new
+              </Link>
+            </div>
+            {loadingScheduled ? (
+              <Spinner />
+            ) : scheduledPosts.length === 0 ? (
+              <EmptyState
+                icon="📅"
+                title="No scheduled posts"
+                message="Schedule a post to publish it at a specific time."
+              >
+                <Link to="/posts/new" className="btn-primary" style={{ marginTop: 8 }}>
+                  <Calendar size={14} />
+                  Schedule a post
+                </Link>
+              </EmptyState>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {scheduledPosts.map((post) => (
+                  <div key={post._id} className="scheduled-post-card">
+                    <div className="scheduled-post-card-left">
+                      <div className="scheduled-post-card-icon">
+                        <Calendar size={16} />
+                      </div>
                       <div>
-                        <div className="exp-card-title">{exp.role}</div>
-                        <div className="exp-card-company">{exp.companyName}</div>
-                        <div className="exp-card-dates">{fmt(exp.startDate)} — {exp.endDate ? fmt(exp.endDate) : 'Present'}</div>
-                        {exp.description && <div className="exp-card-desc">{exp.description}</div>}
+                        <div className="scheduled-post-card-title">{post.title}</div>
+                        <div className="scheduled-post-card-time">
+                          <Clock size={11} />
+                          {new Date(post.postAt).toLocaleString('en-US', {
+                            weekday: 'short',
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          })}
+                        </div>
                       </div>
-                      <div style={{ display: 'flex', gap: 6, flexShrink: 0, marginLeft: 12 }}>
-                        <button className="btn-ghost btn-sm" onClick={() => openEditExp(exp)}>Edit</button>
-                        <button className="btn-danger btn-sm" onClick={() => handleDeleteExp(exp._id)}>Remove</button>
-                      </div>
+                    </div>
+                    <div className="scheduled-post-card-actions">
+                      <span className="post-status-badge post-status-scheduled">
+                        <Clock size={11} />
+                        Pending
+                      </span>
+                      <Link
+                        to={`/posts/${post._id}/edit`}
+                        className="btn-ghost btn-sm"
+                      >
+                        Edit
+                      </Link>
+                      <button
+                        className="btn-danger btn-sm"
+                        onClick={() => handleCancelScheduledPost(post._id)}
+                        disabled={deletingPostId === post._id}
+                      >
+                        {deletingPostId === post._id ? <span className="spinner spinner-sm" /> : 'Cancel'}
+                      </button>
                     </div>
                   </div>
                 ))}
               </div>
-            )
-          }
-        </div>
+            )}
+          </div>
+        )}
 
         <div className="divider" />
 

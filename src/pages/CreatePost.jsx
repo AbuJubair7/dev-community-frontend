@@ -1,9 +1,22 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Calendar, Clock, X, Zap } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { createPost } from '../services/posts.service.js';
 import { getMyCommunities } from '../services/community.service.js';
 import Spinner from '../components/Spinner.jsx';
+
+/** Returns a datetime-local string like "2025-12-25T10:00" (local time) */
+function toDatetimeLocal(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Minimum value: 5 minutes from now */
+function minDatetimeLocal() {
+  return toDatetimeLocal(new Date(Date.now() + 5 * 60 * 1000));
+}
 
 export default function CreatePost() {
   const { token, isAuth } = useAuth();
@@ -17,18 +30,20 @@ export default function CreatePost() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Scheduling state
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduledAt, setScheduledAt] = useState('');
+
   useEffect(() => {
     if (!isAuth) {
       navigate('/login', { replace: true });
       return;
     }
 
-    // Fetch user's joined communities
     getMyCommunities(token)
       .then((data) => {
         setCommunities(data);
         if (data.length > 0 && !communityIdParam) {
-          // Default to the first community
           setForm((f) => ({ ...f, communityId: data[0]._id }));
         }
       })
@@ -42,6 +57,15 @@ export default function CreatePost() {
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
+  const handleToggleSchedule = () => {
+    const next = !scheduleEnabled;
+    setScheduleEnabled(next);
+    if (next && !scheduledAt) {
+      // Default to 1 hour from now
+      setScheduledAt(toDatetimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -49,10 +73,30 @@ export default function CreatePost() {
       setError('You must select a community to publish this post.');
       return;
     }
+    if (scheduleEnabled) {
+      if (!scheduledAt) {
+        setError('Please select a date and time to schedule the post.');
+        return;
+      }
+      const scheduledDate = new Date(scheduledAt);
+      if (scheduledDate <= new Date()) {
+        setError('Scheduled time must be in the future.');
+        return;
+      }
+    }
     setLoading(true);
     try {
-      await createPost(form, token);
-      navigate(`/communities/${form.communityId}`);
+      const payload = { ...form };
+      if (scheduleEnabled && scheduledAt) {
+        // Convert local datetime-local value to ISO string
+        payload.postAt = new Date(scheduledAt).toISOString();
+      }
+      await createPost(payload, token);
+      if (scheduleEnabled) {
+        navigate('/profile', { state: { scheduledSuccess: true } });
+      } else {
+        navigate(`/communities/${form.communityId}`);
+      }
     } catch (err) {
       setError(err.message || 'Failed to create post.');
     } finally {
@@ -69,6 +113,8 @@ export default function CreatePost() {
       </div>
     );
   }
+
+  const isScheduleReady = scheduleEnabled && scheduledAt && new Date(scheduledAt) > new Date();
 
   return (
     <div className="page">
@@ -87,9 +133,14 @@ export default function CreatePost() {
             ← Back
           </button>
         </div>
+
         <div className="page-header">
-          <h1 className="page-title">New Post</h1>
+          <div>
+            <h1 className="page-title">New Post</h1>
+            <p className="page-subtitle">Share something with your community</p>
+          </div>
         </div>
+
         <div className="card">
           {communities.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '20px 0' }}>
@@ -102,6 +153,7 @@ export default function CreatePost() {
             </div>
           ) : (
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              {/* Community selector */}
               <div className="form-group">
                 <label className="form-label">Post to Community</label>
                 <select
@@ -119,6 +171,7 @@ export default function CreatePost() {
                 </select>
               </div>
 
+              {/* Title */}
               <div className="form-group">
                 <label className="form-label">Title</label>
                 <input
@@ -130,6 +183,7 @@ export default function CreatePost() {
                 />
               </div>
 
+              {/* Content */}
               <div className="form-group">
                 <label className="form-label">Content</label>
                 <textarea
@@ -141,6 +195,66 @@ export default function CreatePost() {
                   required
                 />
               </div>
+
+              {/* ── Scheduling section ─────────────────────── */}
+              <div className="schedule-section">
+                <button
+                  type="button"
+                  className={`schedule-toggle-btn${scheduleEnabled ? ' active' : ''}`}
+                  onClick={handleToggleSchedule}
+                >
+                  <Calendar size={15} />
+                  {scheduleEnabled ? 'Scheduling enabled' : 'Schedule for later'}
+                  {scheduleEnabled && (
+                    <span
+                      className="schedule-toggle-close"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setScheduleEnabled(false);
+                        setScheduledAt('');
+                      }}
+                    >
+                      <X size={13} />
+                    </span>
+                  )}
+                </button>
+
+                {scheduleEnabled && (
+                  <div className="schedule-picker-panel">
+                    <div className="schedule-picker-header">
+                      <Clock size={14} />
+                      <span>Choose publish date & time</span>
+                    </div>
+                    <input
+                      type="datetime-local"
+                      className="input schedule-datetime-input"
+                      value={scheduledAt}
+                      onChange={(e) => setScheduledAt(e.target.value)}
+                      min={minDatetimeLocal()}
+                      required={scheduleEnabled}
+                    />
+                    {scheduledAt && new Date(scheduledAt) > new Date() && (
+                      <div className="schedule-preview">
+                        <Zap size={12} />
+                        <span>
+                          Will publish on{' '}
+                          <strong>
+                            {new Date(scheduledAt).toLocaleString('en-US', {
+                              weekday: 'short',
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                              hour: 'numeric',
+                              minute: '2-digit',
+                            })}
+                          </strong>
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              {/* ─────────────────────────────────────────────── */}
 
               {error && <div className="form-error">⚠️ {error}</div>}
 
@@ -158,8 +272,21 @@ export default function CreatePost() {
                 >
                   Cancel
                 </button>
-                <button className="btn-primary" type="submit" disabled={loading}>
-                  {loading ? <span className="spinner spinner-sm" /> : 'Publish post'}
+                <button
+                  className={scheduleEnabled ? 'btn-schedule' : 'btn-primary'}
+                  type="submit"
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <span className="spinner spinner-sm" />
+                  ) : scheduleEnabled ? (
+                    <>
+                      <Calendar size={14} />
+                      {isScheduleReady ? 'Schedule post' : 'Schedule post'}
+                    </>
+                  ) : (
+                    'Publish post'
+                  )}
                 </button>
               </div>
             </form>

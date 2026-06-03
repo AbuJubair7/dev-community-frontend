@@ -83,8 +83,8 @@ export default function CommunityDetail() {
       // If user is member, fetch posts & pending requests if admin/mod
       if (roleRes.status === 'member') {
         const allPosts = await getPosts(token);
-        // Filter posts that belong to this community
-        const commPosts = allPosts.filter((p) => p.communityId === id);
+        // Filter posts that belong to this community and are published
+        const commPosts = allPosts.filter((p) => p.communityId === id && p.status !== 'scheduled');
         setPosts(commPosts);
 
         if (roleRes.role === 'admin' || roleRes.role === 'moderator') {

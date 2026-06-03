@@ -32,11 +32,13 @@ export default function Feed() {
           commMap[c._id] = c.name;
         });
         setPosts(
-          fetchedPosts.map((p) => ({
-            ...p,
-            userName: nameMap[p.userId] || 'Unknown',
-            communityName: commMap[p.communityId] || null,
-          })),
+          fetchedPosts
+            .filter((p) => p.status !== 'scheduled')   // only show published posts in feed
+            .map((p) => ({
+              ...p,
+              userName: nameMap[p.userId] || 'Unknown',
+              communityName: commMap[p.communityId] || null,
+            })),
         );
       })
       .catch((err) => setError(err.message || 'Failed to load posts.'))

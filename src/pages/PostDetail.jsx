@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Pencil, ShieldCheck, Trash2 } from 'lucide-react';
+import { ArrowLeft, Pencil, ShieldCheck, Trash2, Calendar, Clock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { getPostById, deletePost } from '../services/posts.service.js';
 import { getUsers } from '../services/users.service.js';
@@ -183,6 +183,35 @@ export default function PostDetail() {
 
         <h1 className="post-detail-title">{post.title}</h1>
 
+        {/* ── Scheduled post banner ── */}
+        {post.status === 'scheduled' && (
+          <div className="scheduled-post-banner">
+            <div className="scheduled-post-banner-icon">
+              <Calendar size={16} />
+            </div>
+            <div>
+              <div className="scheduled-post-banner-title">Scheduled post</div>
+              <div className="scheduled-post-banner-sub">
+                This post will be published on{' '}
+                <strong>
+                  {new Date(post.postAt).toLocaleString('en-US', {
+                    weekday: 'short',
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                  })}
+                </strong>
+              </div>
+            </div>
+            <span className="post-status-badge post-status-scheduled" style={{ marginLeft: 'auto', flexShrink: 0 }}>
+              <Clock size={11} />
+              Pending
+            </span>
+          </div>
+        )}
+
         <div className="post-detail-meta">
           <span>
             By{' '}
@@ -193,6 +222,15 @@ export default function PostDetail() {
           </span>
           <span>·</span>
           <span>Posted {formatDate(post.createdAt)}</span>
+          {post.status === 'scheduled' && post.postAt && (
+            <>
+              <span>·</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--warning)', fontWeight: 500 }}>
+                <Calendar size={12} />
+                Publishes {formatDate(post.postAt)}
+              </span>
+            </>
+          )}
           {isOwner && (
             <>
               <span>·</span>
