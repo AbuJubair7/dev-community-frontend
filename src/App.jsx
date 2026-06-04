@@ -15,6 +15,7 @@ import EditPost from './pages/EditPost.jsx';
 import Communities from './pages/Communities.jsx';
 import CreateCommunity from './pages/CreateCommunity.jsx';
 import CommunityDetail from './pages/CommunityDetail.jsx';
+import GoogleCallback from './pages/GoogleCallback.jsx';
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/"             element={<Home />} />
           <Route path="/login"        element={<Login />} />
           <Route path="/register"     element={<Register />} />
+          <Route path="/google-callback" element={<GoogleCallback />} />
           <Route path="/feed"         element={<Feed />} />
           <Route path="/posts/new"    element={<CreatePost />} />
           <Route path="/posts/:id/edit" element={<EditPost />} />
